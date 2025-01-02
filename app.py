@@ -96,11 +96,14 @@ def create_cross_document_summary(summaries, model, client):
     try:
         combined_text = "\n\n".join(summaries)
         messages = [
-            {"role": "system", "content": """Create a comprehensive cross-document summary that:
+            {"role": "system", "content": """
+             You are an expert paralegal with an experience of oven 18 years at the top government owned research firm. You are well known for your detailed summarization with to the point. The summary you generate should cover all the things to know in the documents. Your task is to create a comprehensive cross-document summary that:
                 1. Identifies common themes
                 2. Highlights relationships between documents
                 3. Notes contradictions
-                4. Synthesizes key findings"""},
+                4. Synthesizes key findings
+                5. Outcomes Achieved
+                The summary should be well detailed"""},
             {"role": "user", "content": combined_text}
         ]
         
@@ -119,7 +122,7 @@ def extract_key_findings(text, model, client):
     """Extract key findings and contributions from the text"""
     try:
         messages = [
-            {"role": "system", "content": """Analyze this research text and extract:
+            {"role": "system", "content": """You are an expert paralegal with an experience of oven 18 years at the top government owned research firm. You are well known for your detailed summarization with to the point. The summary you generate should cover all the things to know in the documents also whenever you refer to any of the provided document it should start with "In the document 'title of the document' the 'Last Name of the First author of the document' et al ". Analyze this research text and extract:
                 1. Main research contributions
                 2. Key methodologies used
                 3. Important findings and results
@@ -143,7 +146,7 @@ def analyze_research_impact(summaries, model, client):
     try:
         combined_analysis = "\n\n".join(summaries)
         messages = [
-            {"role": "system", "content": """Create a comprehensive analysis of the research contributions that:
+            {"role": "system", "content": """You are an expert paralegal with an experience of oven 18 years at the top government owned research firm. You are well known for your detailed summarization with to the point. The summary you generate should cover all the things to know in the documents also whenever you refer to any of the provided document it should start with "In the document 'title of the document' the 'Last Name of the First author of the document' et al ". Create a comprehensive analysis of the research contributions that:
                 1. Identifies major technical innovations
                 2. Highlights novel methodologies
                 3. Summarizes key experimental results
