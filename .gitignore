@@ -1,0 +1,57 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.env/
+.venv/
+
+# Configuration files with sensitive data
+config.json
+*.env
+
+# Streamlit specific
+.streamlit/
+
+# IDE specific
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Dependency directories
+lib/
+libs/
+include/
+bin/
+
+# Logs
+*.log
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# API keys and credentials
+**/secrets.json
+**/credentials.json
+
+# Large model files or data files
+*.pkl
+*.model
+*.data
+
+# Temporary files
+*.tmp
+*.bak
+
+# Package build directories
+build/
+dist/
+*.egg-info/
