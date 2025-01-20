@@ -10,6 +10,10 @@ from reportlab.lib.pagesizes import letter
 from docx import Document
 import re
 import difflib
+import nltk
+from nltk.translate.bleu_score import sentence_bleu
+from rouge_score import rouge_scorer
+from nltk.translate.bleu_score import SmoothingFunction
 
 # Streamlit page configuration
 st.set_page_config(
@@ -17,6 +21,45 @@ st.set_page_config(
     page_icon="🦙",
     layout="centered"
 )
+
+@st.cache_data
+def download_nltk_resources():
+    """
+    Comprehensive NLTK resource download
+    """
+    try:
+        # Download specific resources explicitly
+        nltk.download('punkt', quiet=True)
+        nltk.download('punkt_tab', quiet=True)
+        
+        # Additional resources you might need
+        nltk.download('wordnet', quiet=True)
+        nltk.download('stopwords', quiet=True)
+        
+        return True
+    except Exception as e:
+        st.error(f"NLTK Resource Download Failed: {e}")
+        return False
+
+# Call the download function
+download_nltk_resources()
+
+# Alternative tokenization method as a fallback
+def safe_tokenize(text):
+    """
+    Safe tokenization with multiple fallback methods
+    """
+    try:
+        # Try NLTK tokenization first
+        return nltk.word_tokenize(text)
+    except Exception:
+        try:
+            # Fallback to simple split
+            return text.split()
+        except Exception:
+            # Last resort: character-level tokenization
+            return list(text)
+
 
 working_dir = os.path.dirname(os.path.abspath(__file__))
 config_data = json.load(open(f"{working_dir}/config.json"))
@@ -40,6 +83,7 @@ if "uploaded_files_content" not in st.session_state:
 
 # Streamlit page title
 st.title("📚 Multi-Document Research Paper Summarizer")
+
 
 # Function to extract text from PDF
 def extract_text_from_pdf(file):
@@ -91,30 +135,183 @@ def process_document(pdf_content, model, client):
         st.warning(f"Error with {model}, trying fallback model...")
         return None
 
-def create_cross_document_summary(summaries, model, client):
-    """Create a summary across multiple documents"""
+def create_cross_document_summary(summaries, original_docs, model, client):
+    """
+    Improved cross-document summary generation
+    """
     try:
-        combined_text = "\n\n".join(summaries)
-        messages = [
-            {"role": "system", "content": """
-             You are an expert paralegal with an experience of oven 18 years at the top government owned research firm. You are well known for your detailed summarization with to the point. The summary you generate should cover all the things to know in the documents. Your task is to create a comprehensive cross-document summary that:
-                1. Identifies common themes
-                2. Highlights relationships between documents
-                3. Notes contradictions
-                4. Synthesizes key findings
-                5. Outcomes Achieved
-                The summary should be well detailed"""},
-            {"role": "user", "content": combined_text}
+        # First, identify key themes across documents
+        theme_prompt = """Analyze these document summaries and identify:
+        1. Common themes and topics
+        2. Shared methodologies
+        3. Related findings
+        4. Contradictions or disagreements
+        5. Knowledge gaps
+        
+        Format the response as a structured list."""
+        
+        theme_messages = [
+            {"role": "system", "content": theme_prompt},
+            {"role": "user", "content": "\n\n".join(summaries)}
         ]
         
-        response = client.chat.completions.create(
+        theme_response = client.chat.completions.create(
             model=model,
-            messages=messages
+            messages=theme_messages
         )
-        return response.choices[0].message.content
+        
+        themes = theme_response.choices[0].message.content
+        
+        # Then, generate the cross-document summary using the identified themes
+        summary_prompt = f"""Based on the following themes:
+
+        {themes}
+
+        Create a comprehensive cross-document summary that:
+        1. Synthesizes the main findings while maintaining accuracy
+        2. Highlights relationships between different research aspects
+        3. Discusses contradictions and agreements
+        4. Presents a coherent narrative of the collective research
+        5. Maintains technical accuracy and proper attribution
+        
+        Focus on creating a summary that would be useful for researchers in this field."""
+        
+        summary_messages = [
+            {"role": "system", "content": summary_prompt},
+            {"role": "user", "content": "\n\n".join(summaries)}
+        ]
+        
+        summary_response = client.chat.completions.create(
+            model=model,
+            messages=summary_messages
+        )
+        
+        return summary_response.choices[0].message.content
+        
     except Exception as e:
         st.error(f"Error in cross-document summary: {str(e)}")
         return "\n\n".join(summaries)
+
+def validate_summary(original_documents, generated_summary, individual_summaries):
+    """
+    Enhanced summary validation with improved comparison logic
+    
+    Args:
+        original_documents (dict): Original documents
+        generated_summary (str): Generated cross-document summary
+        individual_summaries (dict): Individual document summaries
+    
+    Returns:
+        dict: Validation metrics
+    """
+    try:
+        # Initialize ROUGE scorer with different variants
+        rouge_scorer_obj = rouge_scorer.RougeScorer(
+            ['rouge1', 'rouge2', 'rougeL'], 
+            use_stemmer=True
+        )
+        
+        # Separate validation for individual summaries and cross-document summary
+        individual_scores = {
+            'rouge1': [], 'rouge2': [], 'rougeL': [], 'bleu': []
+        }
+        
+        cross_doc_scores = {
+            'rouge1': [], 'rouge2': [], 'rougeL': [], 'bleu': []
+        }
+        
+        # 1. Validate individual summaries against their source documents
+        for doc_name, original_text in original_documents.items():
+            if doc_name in individual_summaries:
+                individual_summary = individual_summaries[doc_name]
+                
+                # ROUGE scores for individual summary
+                rouge_result = rouge_scorer_obj.score(original_text, individual_summary)
+                individual_scores['rouge1'].append(rouge_result['rouge1'].fmeasure)
+                individual_scores['rouge2'].append(rouge_result['rouge2'].fmeasure)
+                individual_scores['rougeL'].append(rouge_result['rougeL'].fmeasure)
+                
+                # BLEU score for individual summary
+                individual_scores['bleu'].append(
+                    calculate_bleu_score(original_text, individual_summary)
+                )
+        
+        # 2. Validate cross-document summary
+        # Compare against concatenated individual summaries instead of original docs
+        combined_summaries = " ".join(individual_summaries.values())
+        
+        # ROUGE scores for cross-document summary
+        cross_rouge = rouge_scorer_obj.score(combined_summaries, generated_summary)
+        cross_doc_scores['rouge1'] = [cross_rouge['rouge1'].fmeasure]
+        cross_doc_scores['rouge2'] = [cross_rouge['rouge2'].fmeasure]
+        cross_doc_scores['rougeL'] = [cross_rouge['rougeL'].fmeasure]
+        
+        # BLEU score for cross-document summary
+        cross_doc_scores['bleu'] = [
+            calculate_bleu_score(combined_summaries, generated_summary)
+        ]
+        
+        # Calculate averages
+        avg_individual_scores = {
+            metric: sum(scores)/len(scores) if scores else 0
+            for metric, scores in individual_scores.items()
+        }
+        
+        avg_cross_doc_scores = {
+            metric: sum(scores)/len(scores) if scores else 0
+            for metric, scores in cross_doc_scores.items()
+        }
+        
+        return {
+            'individual_summaries': {
+                'average_scores': avg_individual_scores,
+                'detailed_scores': individual_scores
+            },
+            'cross_document_summary': {
+                'average_scores': avg_cross_doc_scores,
+                'detailed_scores': cross_doc_scores
+            }
+        }
+        
+    except Exception as e:
+        st.error(f"Validation error: {str(e)}")
+        return None
+
+def calculate_bleu_score(reference_text, candidate_text):
+    """
+    Improved BLEU score calculation
+    """
+    try:
+        # Improved tokenization
+        def tokenize_better(text):
+            # Remove special characters and normalize whitespace
+            text = re.sub(r'[^\w\s]', ' ', text)
+            text = ' '.join(text.split())
+            return text.lower().split()
+        
+        # Prepare reference and candidate
+        reference_tokens = tokenize_better(reference_text)
+        candidate_tokens = tokenize_better(candidate_text)
+        
+        # Use multiple reference sentences for better BLEU calculation
+        reference_sentences = [reference_tokens[i:i+20] for i in range(0, len(reference_tokens), 10)]
+        if not reference_sentences:
+            reference_sentences = [reference_tokens]
+        
+        # Calculate BLEU with smoothing
+        weights = (0.25, 0.25, 0.25, 0.25)  # Equal weights for 1-4 grams
+        score = sentence_bleu(
+            reference_sentences,
+            candidate_tokens,
+            weights=weights,
+            smoothing_function=SmoothingFunction().method1
+        )
+        
+        return score
+        
+    except Exception as e:
+        print(f"BLEU score calculation error: {e}")
+        return 0
 
 # Add these new functions for key work analysis
 
@@ -122,7 +319,7 @@ def extract_key_findings(text, model, client):
     """Extract key findings and contributions from the text"""
     try:
         messages = [
-            {"role": "system", "content": """You are an expert paralegal with an experience of oven 18 years at the top government owned research firm. You are well known for your detailed summarization with to the point. The summary you generate should cover all the things to know in the documents also whenever you refer to any of the provided document it should start with "In the document 'title of the document' the 'Last Name of the First author of the document' et al ". Analyze this research text and extract:
+            {"role": "system", "content": """You are an expert paralegal with an experience of over 18 years at the top government owned research firm. You are well known for your detailed summarization with to the point. The summary you generate should cover all the things to know in the documents also whenever you refer to any of the provided document it should start with "In the document 'title of the document' the 'Last Name of the First author of the document' et al ". Analyze this research text and extract:
                 1. Main research contributions
                 2. Key methodologies used
                 3. Important findings and results
@@ -146,7 +343,7 @@ def analyze_research_impact(summaries, model, client):
     try:
         combined_analysis = "\n\n".join(summaries)
         messages = [
-            {"role": "system", "content": """You are an expert paralegal with an experience of oven 18 years at the top government owned research firm. You are well known for your detailed summarization with to the point. The summary you generate should cover all the things to know in the documents also whenever you refer to any of the provided document it should start with "In the document 'title of the document' the 'Last Name of the First author of the document' et al ". Create a comprehensive analysis of the research contributions that:
+            {"role": "system", "content": """You are an expert paralegal with an experience of over 18 years at the top government owned research firm. You are well known for your detailed summarization with to the point. The summary you generate should cover all the things to know in the documents also whenever you refer to any of the provided document it should start with "In the document 'title of the document' the 'Last Name of the First author of the document' et al ". Create a comprehensive analysis of the research contributions that:
                 1. Identifies major technical innovations
                 2. Highlights novel methodologies
                 3. Summarizes key experimental results
@@ -243,9 +440,39 @@ if uploaded_files:
                         # Generate cross-document summary
                         final_summary = create_cross_document_summary(
                             list(all_summaries.values()),
+                            documents,
                             current_model,
                             client
                         )
+                        
+                        # Validate summaries
+                        validation_results = validate_summary(
+                            documents,
+                            final_summary,
+                            all_summaries
+                        )
+                        
+                        # Display validation results
+                        if validation_results:
+                            st.markdown("### 📊 Summary Validation Metrics")
+                            
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.markdown("#### Individual Summaries Scores")
+                                scores = validation_results['individual_summaries']['average_scores']
+                                st.metric("ROUGE-1", f"{scores['rouge1']:.4f}")
+                                st.metric("ROUGE-2", f"{scores['rouge2']:.4f}")
+                                st.metric("ROUGE-L", f"{scores['rougeL']:.4f}")
+                                st.metric("BLEU", f"{scores['bleu']:.4f}")
+                            
+                            with col2:
+                                st.markdown("#### Cross-Document Summary Scores")
+                                scores = validation_results['cross_document_summary']['average_scores']
+                                st.metric("ROUGE-1", f"{scores['rouge1']:.4f}")
+                                st.metric("ROUGE-2", f"{scores['rouge2']:.4f}")
+                                st.metric("ROUGE-L", f"{scores['rougeL']:.4f}")
+                                st.metric("BLEU", f"{scores['bleu']:.4f}")
                         
                         # Generate research impact analysis
                         research_impact = analyze_research_impact(
